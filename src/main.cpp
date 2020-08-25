@@ -37,19 +37,18 @@
 /***************************************************************************************************/
 #define LED_PIN 2
 #define DEBUGLEVEL VERBOSE
+#define MAX_PACKET_SIZE 256 // Max data packet size
 
 #define uS_TO_S_FACTOR 1000000 // Conversion factor for micro seconds to seconds
 #define TIME_TO_SLEEP 60       // Time ESP32 will go to sleep (in seconds)
 
+#include <WiFi.h>
+#include "OTA.h"
 #include <Wire.h>
 #include <SPI.h>
 #include <BH1750FVI.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BME280.h>
-
-#include <WiFi.h>
-#include <ArduinoOTA.h>
-
 #include <PubSubClient.h> // https://github.com/knolleary/pubsubclient/blob/master/examples/mqtt_esp8266/mqtt_esp8266.ino
 #include <HardwareSerial.h>
 #include <DebugUtils.h>
@@ -57,9 +56,8 @@
 
 //#include "Config.h" // make your own config file or remove this line and use the following lines
 const char *clientId = "WinterGarden";
-const char *mqtt_server = "192.168.2.35";
+const char *mqtt_server = "192.168.2.64";
 #include "WifiCredentials.h"       // const char* ssid = "MySSID"; const char* WifiPassword = "MyPw";
-#include "OTACredentials.h"        // const char* OtaPassword = "MyPw";
 IPAddress ip(192, 168, 2, 5);      // Static IP
 IPAddress dns(192, 168, 2, 1);     // most likely your router
 IPAddress gateway(192, 168, 2, 1); // most likely your router
@@ -67,6 +65,7 @@ IPAddress subnet(255, 255, 255, 0);
 
 unsigned long lastUpdated;
 unsigned long lastLed;
+const char *nameprefix = "WinterGarden";
 uint8_t stateLed = HIGH;
 boolean updateActive;
 RTC_DATA_ATTR unsigned long bootCount;
@@ -97,9 +96,16 @@ Adafruit_BME280 OutsideSensor; // I2C
 
 void setup_wifi()
 {
+  const int maxlen = 40;
+  char fullhostname[maxlen];
+  uint8_t mac[6];
   delay(10);
   DEBUGPRINTNONE("Connecting to ");
   DEBUGPRINTLNNONE(ssid);
+
+  WiFi.macAddress(mac);
+  snprintf(fullhostname, maxlen, "%s-%02x%02x%02x", nameprefix, mac[3], mac[4], mac[5]);
+  WiFi.setHostname(fullhostname);
   WiFi.config(ip, dns, gateway, subnet);
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, WifiPassword);
@@ -130,6 +136,11 @@ void setup_wifi()
   DEBUGPRINTLNNONE("WiFi connected");
   DEBUGPRINTNONE("IP address: ");
   DEBUGPRINTLNNONE(WiFi.localIP());
+
+  if (enableUpdate)
+  {
+    setupOTA(fullhostname);
+  }
 }
 
 void wifiReconnect()
@@ -230,173 +241,139 @@ void setup()
   pinMode(LED_PIN, OUTPUT);
   DEBUGPRINTLNNONE(bootCount);
 
-  while (!InsideSensor.begin(0x76, &Wire))
+  if (!enableUpdate)
   {
-    DEBUGPRINTLNNONE("InsideSensor is not present");
-    delay(5000);
-  }
-  DEBUGPRINTLNNONE("InsideSensor is present");
-  InsideSensor.setSampling(Adafruit_BME280::MODE_FORCED,
-                           Adafruit_BME280::SAMPLING_X1, // temperature
-                           Adafruit_BME280::SAMPLING_X1, // pressure
-                           Adafruit_BME280::SAMPLING_X1, // humidity
-                           Adafruit_BME280::FILTER_OFF);
+    while (!InsideSensor.begin(0x76, &Wire))
+    {
+      DEBUGPRINTLNNONE("InsideSensor is not present");
+      delay(5000);
+    }
+    DEBUGPRINTLNNONE("InsideSensor is present");
+    InsideSensor.setSampling(Adafruit_BME280::MODE_FORCED,
+                             Adafruit_BME280::SAMPLING_X1, // temperature
+                             Adafruit_BME280::SAMPLING_X1, // pressure
+                             Adafruit_BME280::SAMPLING_X1, // humidity
+                             Adafruit_BME280::FILTER_OFF);
 
-  while (!LightSensor.begin())
-  {
-    DEBUGPRINTLNNONE("Light Sensor is not present");
-    delay(5000);
-  }
-  DEBUGPRINTLNNONE("Light Sensor is present");
-  LightSensor.setResolution(BH1750_ONE_TIME_HIGH_RES_MODE_2);
+    while (!LightSensor.begin())
+    {
+      DEBUGPRINTLNNONE("Light Sensor is not present");
+      delay(5000);
+    }
+    DEBUGPRINTLNNONE("Light Sensor is present");
+    LightSensor.setResolution(BH1750_ONE_TIME_HIGH_RES_MODE_2);
 
-  while (!OutsideSensor.begin(0x77, &Wire))
-  {
-    DEBUGPRINTLNNONE("OutsideSensor is not present");
-    delay(5000);
+    while (!OutsideSensor.begin(0x77, &Wire))
+    {
+      DEBUGPRINTLNNONE("OutsideSensor is not present");
+      delay(5000);
+    }
+    DEBUGPRINTLNNONE("OutsideSensor is present");
+    OutsideSensor.setSampling(Adafruit_BME280::MODE_FORCED,
+                              Adafruit_BME280::SAMPLING_X1, // temperature
+                              Adafruit_BME280::SAMPLING_X1, // pressure
+                              Adafruit_BME280::SAMPLING_X1, // humidity
+                              Adafruit_BME280::FILTER_OFF);
   }
-  DEBUGPRINTLNNONE("OutsideSensor is present");
-  OutsideSensor.setSampling(Adafruit_BME280::MODE_FORCED,
-                            Adafruit_BME280::SAMPLING_X1, // temperature
-                            Adafruit_BME280::SAMPLING_X1, // pressure
-                            Adafruit_BME280::SAMPLING_X1, // humidity
-                            Adafruit_BME280::FILTER_OFF);
-
   setup_wifi();
   mqttClient.setServer(mqtt_server, 1883);
   mqttClient.setCallback(mqttCallback);
-  // --------------------------------------------------------------------- OTA
-
-  // Port defaults to 8266
-  if (enableUpdate)
-  {
-    ArduinoOTA.setPort(8266);
-
-    // Hostname defaults to esp8266-[ChipID]
-    ArduinoOTA.setHostname(clientId);
-
-    // No authentication by default
-    ArduinoOTA.setPassword(OtaPassword);
-
-    ArduinoOTA.onStart([]() {
-      Serial.println("Start");
-    });
-    ArduinoOTA.onEnd([]() {
-      enableUpdate = false;
-      updateActive = false;
-      DEBUGPRINTDEBUG("WiFi.disconnect");
-      WiFi.disconnect();
-      while (WiFi.status() == WL_CONNECTED)
-      {
-        DEBUGPRINTDEBUG('.');
-      }
-      DEBUGPRINTLNDEBUG("");
-      Serial.println("\nEnd");
-    });
-    ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
-      Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
-      Serial.println("");
-    });
-    ArduinoOTA.onError([](ota_error_t error) {
-      Serial.printf("Error[%u]: ", error);
-      if (error == OTA_AUTH_ERROR)
-        Serial.println("Auth Failed");
-      else if (error == OTA_BEGIN_ERROR)
-        Serial.println("Begin Failed");
-      else if (error == OTA_CONNECT_ERROR)
-        Serial.println("Connect Failed");
-      else if (error == OTA_RECEIVE_ERROR)
-        Serial.println("Receive Failed");
-      else if (error == OTA_END_ERROR)
-        Serial.println("End Failed");
-    });
-    ArduinoOTA.begin();
-  }
+  mqttClient.setBufferSize(MAX_PACKET_SIZE);
 }
 
 void loop()
 {
-  char Data[256];
-  ArduinoOTA.handle();
-  if (!mqttClient.connected())
+  if (enableUpdate && !updateActive)
   {
-    mqttReconnect();
+    esp_deep_sleep(10 * uS_TO_S_FACTOR);
   }
-  mqttClient.loop();
-
-  if (millis() - lastUpdated >= TIME_TO_SLEEP * 1000)
+  else if (enableUpdate)
   {
-    const size_t capacity = JSON_OBJECT_SIZE(3) + JSON_OBJECT_SIZE(1) + 4 * JSON_OBJECT_SIZE(3);
-    DynamicJsonDocument doc(capacity);
+    ArduinoOTA.handle();
+    digitalWrite(LED_PIN, HIGH);
+  }
+  else
+  {
+    char Data[MAX_PACKET_SIZE];
+    ArduinoOTA.handle();
+    if (!mqttClient.connected())
+    {
+      mqttReconnect();
+    }
+    mqttClient.loop();
 
-    float value;
-
-    JsonObject Light = doc.createNestedObject("Light");
-    value = LightSensor.readLightLevel();
-    DEBUGPRINTNONE("Light level: ");
-    DEBUGPRINTNONE(value);
-    DEBUGPRINTLNNONE(" +-0.5 lx");
-    Light["value"] = value;
-
-    InsideSensor.takeForcedMeasurement();
-
-    JsonObject TempIn = doc.createNestedObject("TempIn");
-    value = InsideSensor.readTemperature();
-    DEBUGPRINTNONE("Inside Temperature: ");
-    DEBUGPRINTNONE(value);
-    DEBUGPRINTLNNONE(" °C");
-    TempIn["Temperature"] = value;
-    value = InsideSensor.readHumidity();
-    DEBUGPRINTNONE("Inside Humidity: ");
-    DEBUGPRINTNONE(value);
-    DEBUGPRINTLNNONE(" %");
-    TempIn["Humidity"] = value;
-    value = InsideSensor.readPressure() / 100.0F;
-    DEBUGPRINTNONE("Inside Pressure: ");
-    DEBUGPRINTNONE(value);
-    DEBUGPRINTLNNONE(" hPa");
-    TempIn["Pressure"] = value;
-
-    OutsideSensor.takeForcedMeasurement();
-
-    JsonObject TempOut = doc.createNestedObject("TempOut");
-    value = OutsideSensor.readTemperature();
-    DEBUGPRINTNONE("Outside Temperature: ");
-    DEBUGPRINTNONE(value);
-    DEBUGPRINTLNNONE(" °C");
-    TempOut["Temperature"] = value;
-    value = OutsideSensor.readHumidity();
-    DEBUGPRINTNONE("Outside Humidity: ");
-    DEBUGPRINTNONE(value);
-    DEBUGPRINTLNNONE(" %");
-    TempOut["Humidity"] = value;
-    value = OutsideSensor.readPressure() / 100.0F;
-    DEBUGPRINTNONE("Outside Pressure: ");
-    DEBUGPRINTNONE(value);
-    DEBUGPRINTLNNONE(" hPa");
-    TempOut["Pressure"] = value;
-
-    DEBUGPRINTNONE("MemUsage.........: ");
-    DEBUGPRINTLNNONE(doc.memoryUsage());
-
-    serializeJson(doc, Data, sizeof(Data));
-    char *topic = "/Data";
-    char *path = (char *)malloc(1 + strlen(clientId) + strlen(topic));
-    strcpy(path, clientId);
-    strcat(path, topic);
-    if (mqttClient.publish(path, Data, true))
+    if (millis() - lastUpdated >= TIME_TO_SLEEP * 1000)
     {
       lastUpdated = millis();
-    }
-    else
-    {
-      DEBUGPRINTLNNONE("MQTT publish failed");
-    }
-    free(path);
+      const size_t capacity = JSON_OBJECT_SIZE(3) + JSON_OBJECT_SIZE(1) + 4 * JSON_OBJECT_SIZE(3);
+      DynamicJsonDocument doc(capacity);
 
-    DEBUGPRINTLNDEBUG(Data);
+      float value;
 
-    LightSensor.reset();
-    LightSensor.powerDown();
+      JsonObject Light = doc.createNestedObject("Light");
+      value = LightSensor.readLightLevel();
+      DEBUGPRINTNONE("Light level: ");
+      DEBUGPRINTNONE(value);
+      DEBUGPRINTLNNONE(" +-0.5 lx");
+      Light["value"] = value;
+
+      InsideSensor.takeForcedMeasurement();
+
+      JsonObject TempIn = doc.createNestedObject("TempIn");
+      value = InsideSensor.readTemperature();
+      DEBUGPRINTNONE("Inside Temperature: ");
+      DEBUGPRINTNONE(value);
+      DEBUGPRINTLNNONE(" °C");
+      TempIn["Temperature"] = value;
+      value = InsideSensor.readHumidity();
+      DEBUGPRINTNONE("Inside Humidity: ");
+      DEBUGPRINTNONE(value);
+      DEBUGPRINTLNNONE(" %");
+      TempIn["Humidity"] = value;
+      value = InsideSensor.readPressure() / 100.0F;
+      DEBUGPRINTNONE("Inside Pressure: ");
+      DEBUGPRINTNONE(value);
+      DEBUGPRINTLNNONE(" hPa");
+      TempIn["Pressure"] = value;
+
+      OutsideSensor.takeForcedMeasurement();
+
+      JsonObject TempOut = doc.createNestedObject("TempOut");
+      value = OutsideSensor.readTemperature();
+      DEBUGPRINTNONE("Outside Temperature: ");
+      DEBUGPRINTNONE(value);
+      DEBUGPRINTLNNONE(" °C");
+      TempOut["Temperature"] = value;
+      value = OutsideSensor.readHumidity();
+      DEBUGPRINTNONE("Outside Humidity: ");
+      DEBUGPRINTNONE(value);
+      DEBUGPRINTLNNONE(" %");
+      TempOut["Humidity"] = value;
+      value = OutsideSensor.readPressure() / 100.0F;
+      DEBUGPRINTNONE("Outside Pressure: ");
+      DEBUGPRINTNONE(value);
+      DEBUGPRINTLNNONE(" hPa");
+      TempOut["Pressure"] = value;
+
+      DEBUGPRINTNONE("MemUsage.........: ");
+      DEBUGPRINTLNNONE(doc.memoryUsage());
+
+      serializeJson(doc, Data, sizeof(Data));
+      char *topic = "/Data";
+      char *path = (char *)malloc(1 + strlen(clientId) + strlen(topic));
+      strcpy(path, clientId);
+      strcat(path, topic);
+      if (!mqttClient.publish(path, Data, false))
+      {
+        lastUpdated = millis() - (TIME_TO_SLEEP * 1000);
+        DEBUGPRINTLNNONE("MQTT publish failed");
+      }
+      free(path);
+
+      DEBUGPRINTLNDEBUG(Data);
+
+      LightSensor.reset();
+      LightSensor.powerDown();
+    }
   }
 }
