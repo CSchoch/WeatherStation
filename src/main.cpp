@@ -36,7 +36,7 @@
 */
 /***************************************************************************************************/
 #define LED_PIN 2
-#define DEBUGLEVEL VERBOSE
+#define DEBUGLEVEL NONE
 #define MAX_PACKET_SIZE 256 // Max data packet size
 
 #define uS_TO_S_FACTOR 1000000 // Conversion factor for micro seconds to seconds
