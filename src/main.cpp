@@ -295,7 +295,6 @@ void loop()
   else
   {
     char Data[MAX_PACKET_SIZE];
-    ArduinoOTA.handle();
     if (!mqttClient.connected())
     {
       mqttReconnect();
