@@ -92,7 +92,7 @@ accuracy                          - value have to be between 0.96 - 1.44, defaul
 */
 BH1750FVI LightSensor(BH1750_DEFAULT_I2CADDR, BH1750_CONTINUOUS_HIGH_RES_MODE_2, BH1750_SENSITIVITY_DEFAULT, BH1750_ACCURACY_DEFAULT);
 Adafruit_BME280 InsideSensor;  // I2C
-Adafruit_BME280 OutsideSensor; // I2C
+// Adafruit_BME280 OutsideSensor; // I2C
 
 void setup_wifi()
 {
@@ -263,17 +263,17 @@ void setup()
     DEBUGPRINTLNNONE("Light Sensor is present");
     LightSensor.setResolution(BH1750_ONE_TIME_HIGH_RES_MODE_2);
 
-    while (!OutsideSensor.begin(0x77, &Wire))
-    {
-      DEBUGPRINTLNNONE("OutsideSensor is not present");
-      delay(5000);
-    }
-    DEBUGPRINTLNNONE("OutsideSensor is present");
-    OutsideSensor.setSampling(Adafruit_BME280::MODE_FORCED,
-                              Adafruit_BME280::SAMPLING_X1, // temperature
-                              Adafruit_BME280::SAMPLING_X1, // pressure
-                              Adafruit_BME280::SAMPLING_X1, // humidity
-                              Adafruit_BME280::FILTER_OFF);
+    // while (!OutsideSensor.begin(0x77, &Wire))
+    // {
+    //   DEBUGPRINTLNNONE("OutsideSensor is not present");
+    //   delay(5000);
+    // }
+    // DEBUGPRINTLNNONE("OutsideSensor is present");
+    // OutsideSensor.setSampling(Adafruit_BME280::MODE_FORCED,
+    //                           Adafruit_BME280::SAMPLING_X1, // temperature
+    //                           Adafruit_BME280::SAMPLING_X1, // pressure
+    //                           Adafruit_BME280::SAMPLING_X1, // humidity
+    //                           Adafruit_BME280::FILTER_OFF);
   }
   setup_wifi();
   mqttClient.setServer(mqtt_server, 1883);
@@ -335,24 +335,24 @@ void loop()
       DEBUGPRINTLNNONE(" hPa");
       TempIn["Pressure"] = value;
 
-      OutsideSensor.takeForcedMeasurement();
+      // OutsideSensor.takeForcedMeasurement();
 
-      JsonObject TempOut = doc.createNestedObject("TempOut");
-      value = OutsideSensor.readTemperature();
-      DEBUGPRINTNONE("Outside Temperature: ");
-      DEBUGPRINTNONE(value);
-      DEBUGPRINTLNNONE(" °C");
-      TempOut["Temperature"] = value;
-      value = OutsideSensor.readHumidity();
-      DEBUGPRINTNONE("Outside Humidity: ");
-      DEBUGPRINTNONE(value);
-      DEBUGPRINTLNNONE(" %");
-      TempOut["Humidity"] = value;
-      value = OutsideSensor.readPressure() / 100.0F;
-      DEBUGPRINTNONE("Outside Pressure: ");
-      DEBUGPRINTNONE(value);
-      DEBUGPRINTLNNONE(" hPa");
-      TempOut["Pressure"] = value;
+      // JsonObject TempOut = doc.createNestedObject("TempOut");
+      // value = OutsideSensor.readTemperature();
+      // DEBUGPRINTNONE("Outside Temperature: ");
+      // DEBUGPRINTNONE(value);
+      // DEBUGPRINTLNNONE(" °C");
+      // TempOut["Temperature"] = value;
+      // value = OutsideSensor.readHumidity();
+      // DEBUGPRINTNONE("Outside Humidity: ");
+      // DEBUGPRINTNONE(value);
+      // DEBUGPRINTLNNONE(" %");
+      // TempOut["Humidity"] = value;
+      // value = OutsideSensor.readPressure() / 100.0F;
+      // DEBUGPRINTNONE("Outside Pressure: ");
+      // DEBUGPRINTNONE(value);
+      // DEBUGPRINTLNNONE(" hPa");
+      // TempOut["Pressure"] = value;
 
       DEBUGPRINTNONE("MemUsage.........: ");
       DEBUGPRINTLNNONE(doc.memoryUsage());
